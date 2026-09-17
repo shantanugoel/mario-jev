@@ -24,13 +24,14 @@ def snapshot(state):
 class ObservationMemory:
     def __init__(self, limit=12):
         self.transitions = deque(maxlen=limit)
+        self.frame_history = deque(maxlen=4)
         self.previous_state = None
         self.previous_action = "wait"
         self.elapsed_frames = 0
         self.jump = None
         self.last_jump = None
 
-    def observe(self, ram, info, frames=6):
+    def observe(self, ram, info, frames=4):
         state = add_context(
             extract_state(ram, info, self.previous_action, frames),
             self.previous_state,
@@ -40,6 +41,7 @@ class ObservationMemory:
         mario = state["mario"]
         state["current_jump"] = self._jump_summary(mario) if self.jump else None
         state["last_jump"] = self.last_jump
+        state["recent_frames"] = list(self.frame_history)
         return state
 
     def _jump_summary(self, mario):
@@ -51,13 +53,30 @@ class ObservationMemory:
             "note": "Measured from action intervals; takeoff/landing timing has up to one action interval of uncertainty.",
         }
 
-    def finish(self, before, ram, info, action, frames, reward, terminated=False):
+    def finish(
+        self, before, ram, info, action, frames, reward, terminated=False, samples=()
+    ):
         after = add_context(
             extract_state(ram, info, action, before["action_frames"]), before, frames
         )
         old, new = before["mario"], after["mario"]
         events = []
-        if old["grounded"] and not new["grounded"]:
+        for sample in samples:
+            self.frame_history.append(
+                {
+                    key: sample[key]
+                    for key in (
+                        "x",
+                        "y",
+                        "grounded",
+                        "vx_px_per_frame",
+                        "vy_px_per_frame",
+                    )
+                }
+            )
+        if old["grounded"] and (
+            not new["grounded"] or any(not sample["grounded"] for sample in samples)
+        ):
             launched = "jump" in action and not before["jump_already_held"]
             events.append("jump_started" if launched else "left_ground")
             if launched:
@@ -73,7 +92,11 @@ class ObservationMemory:
             self.jump["peak_height_px"] = max(
                 self.jump["peak_height_px"], self.jump["takeoff_y"] - new["y"]
             )
-        if not old["grounded"] and new["grounded"] and not terminated:
+        if (
+            not old["grounded"]
+            and new["grounded"]
+            or any(sample["landed"] for sample in samples)
+        ) and not terminated:
             events.append("landed")
             if self.jump:
                 self.last_jump = {
@@ -105,6 +128,9 @@ class ObservationMemory:
             "frames_held": frames,
             "after": snapshot(after),
             "events": events,
+            "landing_frame": next(
+                (sample["frame"] for sample in samples if sample["landed"]), None
+            ),
             "reward": reward,
         }
         self.transitions.append(transition)

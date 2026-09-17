@@ -3,7 +3,7 @@
 A uv-managed Python prototype that plays NES Super Mario Bros. level 1-1.
 Jev receives structured RAM observations and answers focused questions about movement, starting a jump, and sustaining
 a jump, plus timing hops under low ceilings. Code composes their answers into controller buttons.
-The emulator pauses while Jev responds, then advances six game frames by default.
+The emulator pauses while Jev responds, then advances up to four game frames by default, stopping early on landing.
 The resizable game window opens at 800×600 by default. No JavaScript is required.
 
 ## Setup
@@ -53,7 +53,7 @@ uv run mario-jev --dump-state --headless
 uv run mario-jev --policy scripted --headless --episodes 3
 
 # Tune the time each action is held
-uv run mario-jev --frames 6 --decisions 200 --model jev-latest
+uv run mario-jev --frames 4 --decisions 200 --model jev-latest
 
 uv run mario-jev --help
 ```
@@ -64,6 +64,28 @@ retries disabled; an API error stops gameplay instead of consuming more requests
 Every Jev decision is a paid API request. `--decisions` limits calls per episode;
 `--episodes` multiplies that limit. No API key is needed for the scripted policy
 or state dump.
+
+## Replay
+
+Replay a recorded gameplay log with no API calls or API key:
+
+```sh
+uv run mario-jev --replay runs/20260917T051444816158Z.jsonl
+
+# Twice normal playback speed
+uv run mario-jev --replay runs/20260917T051444816158Z.jsonl --speed 2
+
+# Fast headless verification
+uv run mario-jev --replay runs/20260917T051444816158Z.jsonl --headless
+```
+
+Substitute your own timestamped log path. Playback uses the recorded seed,
+controller actions, and actual frames executed, including landing-shortened
+intervals. It checks positions against the log and stops on divergence. Keep
+`uv.lock` and the same game/emulator version for reproducible playback. Visible
+playback defaults to normal game speed because there is no model wait. Logs are
+local and excluded from Git; the sample filename refers to the verified local
+successful run, not a bundled recording.
 
 ## Observations and logs
 
@@ -87,8 +109,19 @@ Each transition includes before/after position, measured velocity, grounded stat
 action, actual frames held, reward, and possible landing/head-bump/blocking events.
 `current_jump` tracks takeoff, elapsed frames, distance and peak height across the
 whole jump, even when takeoff leaves the recent-history window. `last_jump`
-reports the previous completed jump. Memory resets at each episode. Velocities
+reports the previous completed jump. The last four consecutive frame samples are also included as `recent_frames`.
+Memory resets at each episode. Velocities
 are interval averages; collision events are estimates, not engine guarantees.
+
+The runner checks RAM after every emulator step. It interrupts frame repetition
+on landing and immediately asks Jev for the next action, recording the actual
+frames held and `landing_frame`. Four is the maximum default action duration,
+not a promise to always hold buttons for four frames. This avoids hiding a
+brief grounded state between calls. It borrows the four-frame action interval
+and observation history from the prior PPO pipeline, while landing interruption
+is an additional safeguard for the API controller. Compared with six-frame
+actions, four-frame actions need roughly 50% more calls per game second; landing
+interruptions can add more.
 
 `landing_surfaces` describes exposed solid tile tops and visible floor gaps,
 including a far-bank height where available. These are candidates, not guaranteed
@@ -123,6 +156,9 @@ executing recorded actions, then uses fresh Jev decisions. It is not a full run
 or training. With richer transition history and landing geometry, a replay of the
 later ditch approach landed on the upper stair, launched a second jump, and
 reached x=2567 alive beyond the gap; the previous runs died around x=2472–2474.
+With four-frame actions and per-frame landing interruption, another replay
+caught the upper-step landing at x=2431 after one frame, launched a new jump,
+and reached x=2551 alive.
 
 ## Development
 
@@ -135,6 +171,7 @@ uv run ruff format --check src tests
 - `src/mario_jev/cli.py`: episode runner and JSONL logging
 - `src/mario_jev/state.py`: SMB1 memory decoding and terrain geometry
 - `src/mario_jev/history.py`: bounded transition history and jump tracking
+- `src/mario_jev/runner.py`: per-frame observations and landing interruptions
 - `src/mario_jev/policy.py`: Jev choices, button mappings, and scripted baseline
 - `uv.lock`: exact resolved dependency versions
 

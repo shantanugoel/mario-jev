@@ -5,12 +5,13 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from time import perf_counter, sleep
+from time import perf_counter
 
 from dotenv import load_dotenv
 
 from .history import ObservationMemory
 from .policy import ACTIONS, JevPolicy, ScriptedPolicy
+from .runner import execute_action
 
 
 def positive(value):
@@ -24,7 +25,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", choices=["jev", "scripted"], default="jev")
     parser.add_argument("--model", default="jev-latest")
-    parser.add_argument("--frames", type=positive, default=6)
+    parser.add_argument("--frames", type=positive, default=4)
     parser.add_argument(
         "--decisions",
         type=positive,
@@ -46,7 +47,23 @@ def main():
         action="store_true",
         help="Print initial RAM-derived state without model calls",
     )
+    parser.add_argument(
+        "--replay", type=Path, help="Replay a gameplay log without API calls"
+    )
+    parser.add_argument(
+        "--speed", type=positive, default=1, help="Replay speed multiplier (default: 1)"
+    )
     args = parser.parse_args()
+    if args.replay:
+        from .replay import replay
+
+        try:
+            replay(args.replay, args.headless, args.speed)
+        except KeyboardInterrupt:
+            print("Replay stopped.")
+        except Exception as exc:  # noqa: BLE001 -- CLI error boundary
+            parser.exit(1, f"Replay failed ({type(exc).__name__}): {exc}\n")
+        return
     load_dotenv()
     if (
         args.policy == "jev"
@@ -102,6 +119,7 @@ def main():
                     "decisions": args.decisions,
                     "episodes": args.episodes,
                     "history": args.history,
+                    "interrupt_on_landing": True,
                     "seed": args.seed,
                     "env": "SuperMarioBros-1-1-v0",
                 }
@@ -124,21 +142,12 @@ def main():
                     started = perf_counter()
                     action, diagnostics = policy.choose(state)
                     latency = (perf_counter() - started) * 1000
-                    reward = 0.0
-                    executed = 0
-                    for _ in range(args.frames):
-                        _, step_reward, terminated, truncated, info = env.step(
-                            list(ACTIONS).index(action)
-                        )
-                        executed += 1
-                        reward += float(step_reward)
-                        max_x = max(max_x, int(info["x_pos"]))
-                        completed |= bool(info.get("flag_get"))
-                        if not args.headless:
-                            env.render()
-                            sleep(1 / 60)
-                        if terminated or truncated:
-                            break
+                    info, reward, terminated, truncated, samples = execute_action(
+                        env, action, args.frames, args.headless
+                    )
+                    executed = len(samples)
+                    max_x = max(max_x, *(sample["x"] for sample in samples))
+                    completed |= bool(info.get("flag_get"))
                     transition = memory.finish(
                         state,
                         env.unwrapped.ram,
@@ -147,6 +156,7 @@ def main():
                         executed,
                         reward,
                         terminated or truncated,
+                        samples=samples,
                     )
                     total_reward += reward
                     write(

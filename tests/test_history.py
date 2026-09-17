@@ -54,3 +54,37 @@ def test_stepping_off_is_not_a_jump():
     transition = memory.finish(before, ram, {}, "right", 6, 0)
     assert "left_ground" in transition["events"]
     assert memory.observe(ram, {})["current_jump"] is None
+
+
+def test_frame_stack_and_precise_landing_event():
+    ram = initial_ram()
+    ram[0x1D] = 2
+    memory = ObservationMemory()
+    before = memory.observe(ram, {})
+    ram[0x86], ram[0xCE], ram[0x1D] = 46, 176, 0
+    samples = [
+        {
+            "x": 43,
+            "y": 175,
+            "grounded": False,
+            "vx_px_per_frame": 3,
+            "vy_px_per_frame": -1,
+            "landed": False,
+            "frame": 1,
+        },
+        {
+            "x": 46,
+            "y": 176,
+            "grounded": True,
+            "vx_px_per_frame": 3,
+            "vy_px_per_frame": 1,
+            "landed": True,
+            "frame": 2,
+        },
+    ]
+    transition = memory.finish(before, ram, {}, "right", 2, 6, samples=samples)
+    assert transition["landing_frame"] == 2
+    assert "landed" in transition["events"]
+    state = memory.observe(ram, {})
+    assert len(state["recent_frames"]) == 2
+    assert state["recent_frames"][-1]["grounded"]
