@@ -10,7 +10,7 @@ from time import perf_counter, sleep
 from dotenv import load_dotenv
 
 from .policy import ACTIONS, JevPolicy, ScriptedPolicy
-from .state import extract_state
+from .state import add_context, extract_state
 
 
 def positive(value):
@@ -68,7 +68,10 @@ def main():
             _, info = env.reset(seed=args.seed)
             print(
                 json.dumps(
-                    extract_state(env.unwrapped.ram, info, frames=args.frames), indent=2
+                    add_context(
+                        extract_state(env.unwrapped.ram, info, frames=args.frames)
+                    ),
+                    indent=2,
                 )
             )
             return
@@ -105,6 +108,9 @@ def main():
                         env.unwrapped.viewer._window.set_size(800, 600)
                         env.render()
                 previous = "wait"
+                previous_state = None
+                history = []
+                executed = 0
                 max_x = int(info["x_pos"])
                 total_reward = 0.0
                 completed = False
@@ -113,6 +119,7 @@ def main():
                     state = extract_state(
                         env.unwrapped.ram, info, previous, args.frames
                     )
+                    state = add_context(state, previous_state, executed, history[-4:])
                     started = perf_counter()
                     action, diagnostics = policy.choose(state)
                     latency = (perf_counter() - started) * 1000
@@ -144,12 +151,22 @@ def main():
                             "reward": reward,
                             "result": {
                                 "x": int(info["x_pos"]),
-                                "y": int(info["y_pos"]),
+                                "y": int(env.unwrapped.ram[0xCE]),
                                 "flag_get": completed,
                                 "terminated": bool(terminated),
                                 "truncated": bool(truncated),
                             },
                             **diagnostics,
+                        }
+                    )
+                    previous_state = state
+                    history.append(
+                        {
+                            "x": state["mario"]["x"],
+                            "y": state["mario"]["y"],
+                            "action": action,
+                            "next_x": int(info["x_pos"]),
+                            "reward": reward,
                         }
                     )
                     previous = action

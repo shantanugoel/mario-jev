@@ -1,7 +1,8 @@
 # Mario + Jev
 
 A uv-managed Python prototype that plays NES Super Mario Bros. level 1-1.
-Jev receives structured RAM observations and chooses among six controller actions.
+Jev receives structured RAM observations and answers three focused questions about movement, starting a jump, and sustaining
+a jump. Code composes their answers into controller buttons.
 The emulator pauses while Jev responds, then advances six game frames by default.
 The resizable game window opens at 800×600 by default. No JavaScript is required.
 
@@ -67,26 +68,37 @@ or state dump.
 ## Observations and logs
 
 `state.py` decodes Mario's position, motion, grounded state, nearby enemy slots,
-and the visible portion of the two RAM metatile buffers. Tile columns are
-relative to Mario, with thirteen rows starting at screen y=32. Unreported terrain
-is unknown. The decoder is specific to vanilla SMB1; it is not suitable for SMB2,
-SMB3, ROM hacks, or arbitrary emulator memory layouts.
+and the visible portion of the two RAM metatile buffers. It adds measured Mario
+and enemy velocity in pixels per game frame, approximate time to enemy contact,
+body/feet coordinates, nearby obstacle height, empty terrain columns, overhead
+clearance, blocked-forward detection, and the last four decisions. Velocity is
+an average over the previous action interval; it is not a predicted trajectory.
+Enemy estimates reset when the slot/type changes or a teleport is detected.
 
-The first implementation reports raw metatile IDs with a small legend. It does
-not completely classify tile collision behavior or predict enemy trajectories.
-Mario's logical y origin differs from his drawn body: feet are approximately
-y+32. Raw speed bytes are signed engine units, not pixel-per-frame estimates.
+Tile columns are relative to Mario, with thirteen rows starting at screen y=32.
+The decoder uses a small set of known vanilla SMB1 solid tiles; raw metatile IDs
+remain available. Unreported terrain is unknown. It is specific to vanilla SMB1,
+not SMB2, SMB3, or ROM hacks. Empty columns can indicate pits or drops; geometric
+summaries and contact times are approximate, not collision guarantees.
+
+Jev answers `movement` (run/walk/brake/wait), `start_jump`, and `sustain_jump` in
+one API call. The two jump answers use Noul probabilities with a 0.5 threshold.
+Code selects start-jump only when grounded and A previously released, and uses
+sustain-jump while airborne. It adds no scripted hazard override. Separate jump
+buttons allow braking or waiting while jumping. Logs record every model answer
+and the composed action; the reported top-level confidence belongs to movement,
+not to the complete controller action or probability of surviving.
 
 Timestamped `runs/*.jsonl` files contain configuration, input state, controller
 choice, Jev confidence and probabilities, token usage, API latency, actual frames
 executed, reward, next position, and episode summaries. These are decision logs,
-not saved emulator states or video recordings. The selected action is executed
-directly; there is no scripted override of Jev decisions.
+not saved emulator states or video recordings. The composed controller action is executed directly.
 
 The scripted controller is a simple baseline. Local verification reached x=2471
-before dying; it does not currently complete the level. Jev gameplay quality
-still needs evaluation with your API key. Its confidence measures the returned
-choice distribution, not an empirically validated probability of surviving.
+before dying; it does not currently complete the level. A bounded live evaluation of the revised Jev controller passed the first Goomba,
+early pipes, and first pit, reaching x=1594 after 110 decisions without dying.
+The original controller died at x=315. These are individual runs, not a measured
+completion rate; full-level completion is not yet demonstrated.
 
 ## Development
 

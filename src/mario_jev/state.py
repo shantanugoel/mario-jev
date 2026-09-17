@@ -41,6 +41,7 @@ def extract_state(ram, info, previous_action="wait", frames=6):
         if -48 <= ex - x <= 192:
             enemies.append(
                 {
+                    "slot": slot,
                     "kind": names.get(kind, f"object_{kind:02x}"),
                     "dx": ex - x,
                     "dy": ey - y,
@@ -69,3 +70,167 @@ def extract_state(ram, info, previous_action="wait", frames=6):
         "action_frames": frames,
         "time_remaining": info.get("time"),
     }
+
+
+# Common vanilla SMB1 collision metatiles. Unknown values stay unknown rather
+# than treating coins/scenery as a wall. Raw columns remain available.
+SOLID_TILES = {
+    0x10,
+    0x11,
+    0x12,
+    0x13,
+    0x14,
+    0x15,
+    0x51,
+    0x52,
+    0x54,
+    0x57,
+    0x58,
+    0x5D,
+    0x60,
+    0x61,
+    0xC0,
+    0xC1,
+    0xC4,
+}
+
+
+def add_context(state, previous=None, elapsed_frames=6, history=()):
+    """Add interpretable geometry and measured motion to a RAM observation.
+
+    Estimates describe the past interval, not a simulated future trajectory.
+    No observation from another episode should be passed as previous.
+    """
+    mario = state["mario"]
+    x, y = mario["x"], mario["y"]
+    top = y + (16 if mario["status"] == "small" else 0)
+    feet = y + 32
+    vx = vy = None
+    if previous is not None and elapsed_frames > 0:
+        vx = (x - previous["mario"]["x"]) / elapsed_frames
+        vy = (y - previous["mario"]["y"]) / elapsed_frames
+    mario.update(
+        {
+            "body_top_y": top,
+            "feet_y": feet,
+            "width_px": 16,
+            "vx_px_per_frame": None if vx is None else round(vx, 3),
+            "vy_px_per_frame": None if vy is None else round(vy, 3),
+            "motion": "grounded"
+            if mario["grounded"]
+            else "rising"
+            if vy is not None and vy < 0
+            else "falling"
+            if vy is not None and vy > 0
+            else "airborne",
+        }
+    )
+    obstacles, gaps, ceilings = [], [], []
+    for column in state["terrain"]["columns"]:
+        dx, tiles = column["dx"], column["tiles"]
+        solids = [
+            32 + row * 16 for row, tile in enumerate(tiles) if tile in SOLID_TILES
+        ]
+        if dx >= 0:
+            walls = [sy for sy in solids if sy < feet and sy + 16 > top]
+            if walls:
+                wall_top = min(walls)
+                while wall_top - 16 in solids:
+                    wall_top -= 16
+                obstacles.append(
+                    {
+                        "distance_px": max(0, dx - 16),
+                        "top_y": wall_top,
+                        "height_above_feet_px": feet - wall_top,
+                    }
+                )
+            # A pit needs an entirely empty column below the feet. Unknown
+            # metatiles cannot establish either support or absence of support.
+            below = tiles[max(0, min(13, (feet - 32) // 16)) :]
+            if below and all(tile == 0 for tile in below):
+                gaps.append(
+                    {
+                        "edge_distance_px": max(0, dx - 16),
+                        "column_left_dx": dx,
+                        "column_width_px": 16,
+                    }
+                )
+        if dx <= 8 < dx + 16:
+            above = [sy + 16 for sy in solids if sy + 16 <= top]
+            if above:
+                ceilings.append(top - max(above))
+    nearest_gap = min(gaps, key=lambda item: item["edge_distance_px"]) if gaps else None
+    if nearest_gap:
+        edge = nearest_gap["column_left_dx"]
+        run = [item for item in gaps if item["column_left_dx"] >= edge]
+        width = 16
+        for item in run[1:]:
+            if item["column_left_dx"] == edge + width:
+                width += 16
+            else:
+                break
+        nearest_gap["observed_width_px"] = width
+        nearest_gap["width_may_extend_offscreen"] = bool(
+            state["terrain"]["columns"]
+            and edge + width >= state["terrain"]["columns"][-1]["dx"] + 16
+        )
+    state["terrain"]["summary"] = {
+        "nearest_obstacle": min(obstacles, key=lambda item: item["distance_px"])
+        if obstacles
+        else None,
+        "nearest_empty_column_below_feet": min(
+            gaps, key=lambda item: item["edge_distance_px"]
+        )
+        if gaps
+        else None,
+        "overhead_clearance_px": min(ceilings) if ceilings else None,
+        "note": "Empty columns below feet can be pits OR a drop to lower terrain outside the view. Distances use approximate body edges. Unknown/offscreen terrain is not safe ground.",
+    }
+    old_objects = (
+        {obj.get("slot"): obj for obj in previous["nearby_objects"]} if previous else {}
+    )
+    for obj in state["nearby_objects"]:
+        old = old_objects.get(obj.get("slot"))
+        enemy_vx = None
+        if old and old["kind"] == obj["kind"] and elapsed_frames > 0:
+            enemy_vx = (
+                (x + obj["dx"]) - (previous["mario"]["x"] + old["dx"])
+            ) / elapsed_frames
+            if abs(enemy_vx) > 8:  # slot reuse or teleport, not a velocity estimate
+                enemy_vx = None
+        gap = max(0, obj["dx"] - 16)
+        closing = vx - enemy_vx if vx is not None and enemy_vx is not None else None
+        obj.update(
+            {
+                "horizontal_gap_px": gap,
+                "vx_px_per_frame": None if enemy_vx is None else round(enemy_vx, 3),
+                "estimated_contact_in_frames": round(gap / closing, 1)
+                if closing is not None and closing > 0 and obj["dx"] >= 0
+                else None,
+                "same_height": abs(obj["dy"]) < 24,
+                "defeated": bool(obj["state_raw"] & 0x20)
+                or (obj["kind"] == "goomba" and obj["state_raw"] == 4),
+            }
+        )
+    threats = [
+        obj
+        for obj in state["nearby_objects"]
+        if obj["kind"] != "flagpole"
+        and not obj["defeated"]
+        and obj["same_height"]
+        and obj["dx"] >= 0
+    ]
+    state["nearest_threat"] = (
+        min(threats, key=lambda obj: obj["dx"]) if threats else None
+    )
+    state["recent_decisions"] = list(history)
+    state["blocked_forward"] = len(history) >= 3 and all(
+        item["next_x"] - item["x"] < 2 and item["action"].startswith("right")
+        for item in list(history)[-3:]
+    )
+    state["physics"] = {
+        "motion_estimate_interval_frames": elapsed_frames if previous else None,
+        "control": "A starts a jump only when grounded and previously released. Holding A during ascent increases height. Releasing A shortens the jump. B accelerates running; left brakes rightward motion. No new jump can start in midair.",
+        "timing": "At running speed Mario moves about 3 pixels/frame. Jump before contact: allow roughly 8-16 frames to gain clearance. A same-height enemy 25 pixels ahead is urgent; 50-70 pixels ahead is a reasonable jump approach. These are approximate guidance, not guaranteed safe trajectories.",
+    }
+    return state
