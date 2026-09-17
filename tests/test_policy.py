@@ -8,18 +8,20 @@ from mario_jev.policy import JevPolicy
 
 
 @pytest.mark.parametrize(
-    "grounded, held, sustain, movement, expected",
+    "grounded, held, sustain, movement, expected, ceiling, ceiling_hop",
     [
-        (True, False, 0.1, "run_right", "right_run_jump"),
-        (True, True, 0.9, "run_right", "right_run"),
-        (False, True, 0.9, "run_right", "right_run_jump"),
-        (False, True, 0.1, "run_right", "right_run"),
-        (True, False, 0.1, "brake_left", "left_jump"),
-        (True, False, 0.1, "wait", "jump"),
+        (True, False, 0.1, "run_right", "right_run_jump", False, 0.1),
+        (True, True, 0.9, "run_right", "right_run", False, 0.1),
+        (False, True, 0.9, "run_right", "right_run_jump", False, 0.1),
+        (False, True, 0.1, "run_right", "right_run", False, 0.1),
+        (True, False, 0.1, "brake_left", "left_jump", False, 0.1),
+        (True, False, 0.1, "wait", "jump", False, 0.1),
+        (True, False, 0.1, "run_right", "right_run", True, 0.1),
+        (True, False, 0.1, "run_right", "right_run_jump", True, 0.9),
     ],
 )
 def test_real_sdk_request_and_response(
-    monkeypatch, grounded, held, sustain, movement, expected
+    monkeypatch, grounded, held, sustain, movement, expected, ceiling, ceiling_hop
 ):
     def handle(request):
         body = json.loads(request.content)
@@ -39,6 +41,7 @@ def test_real_sdk_request_and_response(
                         "probabilities": {"run_right": 0.9, "walk_right": 0.1},
                     },
                     "start_jump": {"type": "noul", "noul": 0.9},
+                    "ceiling_hop": {"type": "noul", "noul": ceiling_hop},
                     "sustain_jump": {"type": "noul", "noul": sustain},
                 },
             },
@@ -56,6 +59,7 @@ def test_real_sdk_request_and_response(
                 "action_frames": 6,
                 "mario": {"grounded": grounded},
                 "jump_already_held": held,
+                "jump_corridor": {"low_ceiling_before_nearest_threat": ceiling},
             }
         )
         assert action == expected

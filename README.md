@@ -1,8 +1,8 @@
 # Mario + Jev
 
 A uv-managed Python prototype that plays NES Super Mario Bros. level 1-1.
-Jev receives structured RAM observations and answers three focused questions about movement, starting a jump, and sustaining
-a jump. Code composes their answers into controller buttons.
+Jev receives structured RAM observations and answers focused questions about movement, starting a jump, and sustaining
+a jump, plus timing hops under low ceilings. Code composes their answers into controller buttons.
 The emulator pauses while Jev responds, then advances six game frames by default.
 The resizable game window opens at 800×600 by default. No JavaScript is required.
 
@@ -71,7 +71,9 @@ or state dump.
 and the visible portion of the two RAM metatile buffers. It adds measured Mario
 and enemy velocity in pixels per game frame, approximate time to enemy contact,
 body/feet coordinates, nearby obstacle height, empty terrain columns, overhead
-clearance, blocked-forward detection, and the last four decisions. Velocity is
+clearance, blocked-forward detection, and the last twelve transitions by default. A jump corridor reports
+ceiling spans up to 128 pixels ahead, available headroom, and whether low bricks
+lie on the approach to an enemy. This is geometry rather than jump simulation. Velocity is
 an average over the previous action interval; it is not a predicted trajectory.
 Enemy estimates reset when the slot/type changes or a teleport is detected.
 
@@ -81,8 +83,24 @@ remain available. Unreported terrain is unknown. It is specific to vanilla SMB1,
 not SMB2, SMB3, or ROM hacks. Empty columns can indicate pits or drops; geometric
 summaries and contact times are approximate, not collision guarantees.
 
-Jev answers `movement` (run/walk/brake/wait), `start_jump`, and `sustain_jump` in
-one API call. The two jump answers use Noul probabilities with a 0.5 threshold.
+Each transition includes before/after position, measured velocity, grounded state,
+action, actual frames held, reward, and possible landing/head-bump/blocking events.
+`current_jump` tracks takeoff, elapsed frames, distance and peak height across the
+whole jump, even when takeoff leaves the recent-history window. `last_jump`
+reports the previous completed jump. Memory resets at each episode. Velocities
+are interval averages; collision events are estimates, not engine guarantees.
+
+`landing_surfaces` describes exposed solid tile tops and visible floor gaps,
+including a far-bank height where available. These are candidates, not guaranteed
+reachable surfaces. History and geometry help Jev reason about trajectories;
+there is no forward physics simulation yet. `--history 8` changes the recent
+transition count. More history increases input-token cost, not requests per decision.
+
+Jev answers `movement` (run/walk/brake/wait), `start_jump`, `ceiling_hop`, and
+`sustain_jump` in one API call. Jump answers use Noul probabilities with a 0.5
+threshold. On an enemy approach under low bricks, without a competing pipe or
+pit, code uses the focused `ceiling_hop` answer instead of the ordinary
+`start_jump` answer.
 Code selects start-jump only when grounded and A previously released, and uses
 sustain-jump while airborne. It adds no scripted hazard override. Separate jump
 buttons allow braking or waiting while jumping. Logs record every model answer
@@ -98,7 +116,13 @@ The scripted controller is a simple baseline. Local verification reached x=2471
 before dying; it does not currently complete the level. A bounded live evaluation of the revised Jev controller passed the first Goomba,
 early pipes, and first pit, reaching x=1594 after 110 decisions without dying.
 The original controller died at x=315. These are individual runs, not a measured
-completion rate; full-level completion is not yet demonstrated.
+completion rate; full-level completion is not yet demonstrated. A targeted replay of a later
+ceiling/Goomba failure reached x=2902 alive with the ceiling timing improvement;
+the original recorded run died at x=2764. The replay restores the approach by
+executing recorded actions, then uses fresh Jev decisions. It is not a full run
+or training. With richer transition history and landing geometry, a replay of the
+later ditch approach landed on the upper stair, launched a second jump, and
+reached x=2567 alive beyond the gap; the previous runs died around x=2472–2474.
 
 ## Development
 
@@ -109,7 +133,8 @@ uv run ruff format --check src tests
 ```
 
 - `src/mario_jev/cli.py`: episode runner and JSONL logging
-- `src/mario_jev/state.py`: SMB1 memory decoding
+- `src/mario_jev/state.py`: SMB1 memory decoding and terrain geometry
+- `src/mario_jev/history.py`: bounded transition history and jump tracking
 - `src/mario_jev/policy.py`: Jev choices, button mappings, and scripted baseline
 - `uv.lock`: exact resolved dependency versions
 

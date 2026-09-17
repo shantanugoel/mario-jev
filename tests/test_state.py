@@ -90,3 +90,53 @@ def test_gap_width_remains_correct_when_edge_overlaps_body():
     assert gap["edge_distance_px"] == 0
     assert gap["observed_width_px"] == 32
     assert gap["width_may_extend_offscreen"] is False
+
+
+def test_recorded_goomba_approach_exposes_low_ceiling():
+    import json
+    from pathlib import Path
+
+    from mario_jev.state import add_context
+
+    state = json.loads(
+        (Path(__file__).parent / "fixtures/low_ceiling.json").read_text()
+    )
+    corridor = add_context(state)["jump_corridor"]
+    assert corridor["low_ceiling_now"]
+    assert corridor["low_ceiling_before_nearest_threat"]
+    assert corridor["minimum_headroom_before_threat_px"] == 32
+    assert corridor["ceiling_spans"][0]["end_dx"] > 0
+
+
+def test_clear_sky_does_not_report_ceiling():
+    from mario_jev.state import add_context
+
+    ram = bytearray(2048)
+    ram[0x86], ram[0xCE] = 40, 176
+    corridor = add_context(extract_state(ram, {}))["jump_corridor"]
+    assert not corridor["low_ceiling_now"]
+    assert corridor["ceiling_spans"] == []
+
+
+def test_gap_reports_a_raised_far_bank():
+    from mario_jev.state import add_context
+
+    ram = bytearray(2048)
+    ram[0x86], ram[0xCE] = 40, 176
+    for col in range(16):
+        for row in range(11, 13):
+            ram[0x500 + row * 16 + col] = 0x54
+    for col in (6, 7):
+        for row in range(11, 13):
+            ram[0x500 + row * 16 + col] = 0
+    for row in range(5, 11):
+        ram[0x500 + row * 16 + 8] = 0x61
+    landings = add_context(extract_state(ram, {}))["landing_surfaces"]
+    gap = landings["floor_gaps"][0]
+    assert gap["observed_width_px"] == 32
+    assert gap["far_edge_visible"]
+    assert gap["far_bank_top_y"] == 112
+    bank = next(
+        s for s in landings["surfaces"] if s["start_dx"] == 88 and s["top_y"] == 112
+    )
+    assert bank["height_above_current_feet_px"] == 96

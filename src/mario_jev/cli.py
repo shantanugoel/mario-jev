@@ -9,8 +9,8 @@ from time import perf_counter, sleep
 
 from dotenv import load_dotenv
 
+from .history import ObservationMemory
 from .policy import ACTIONS, JevPolicy, ScriptedPolicy
-from .state import add_context, extract_state
 
 
 def positive(value):
@@ -32,6 +32,12 @@ def main():
         help="Maximum decisions per episode (and API calls with Jev)",
     )
     parser.add_argument("--episodes", type=positive, default=1)
+    parser.add_argument(
+        "--history",
+        type=positive,
+        default=12,
+        help="Recent transitions to send to Jev (default: 12)",
+    )
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--log-dir", type=Path, default=Path("runs"))
@@ -68,8 +74,8 @@ def main():
             _, info = env.reset(seed=args.seed)
             print(
                 json.dumps(
-                    add_context(
-                        extract_state(env.unwrapped.ram, info, frames=args.frames)
+                    ObservationMemory(args.history).observe(
+                        env.unwrapped.ram, info, args.frames
                     ),
                     indent=2,
                 )
@@ -95,6 +101,7 @@ def main():
                     "frames": args.frames,
                     "decisions": args.decisions,
                     "episodes": args.episodes,
+                    "history": args.history,
                     "seed": args.seed,
                     "env": "SuperMarioBros-1-1-v0",
                 }
@@ -107,19 +114,13 @@ def main():
                         # nes-py exposes its pyglet window through the viewer.
                         env.unwrapped.viewer._window.set_size(800, 600)
                         env.render()
-                previous = "wait"
-                previous_state = None
-                history = []
-                executed = 0
+                memory = ObservationMemory(args.history)
                 max_x = int(info["x_pos"])
                 total_reward = 0.0
                 completed = False
                 terminated = truncated = False
                 for decision in range(args.decisions):
-                    state = extract_state(
-                        env.unwrapped.ram, info, previous, args.frames
-                    )
-                    state = add_context(state, previous_state, executed, history[-4:])
+                    state = memory.observe(env.unwrapped.ram, info, args.frames)
                     started = perf_counter()
                     action, diagnostics = policy.choose(state)
                     latency = (perf_counter() - started) * 1000
@@ -138,6 +139,15 @@ def main():
                             sleep(1 / 60)
                         if terminated or truncated:
                             break
+                    transition = memory.finish(
+                        state,
+                        env.unwrapped.ram,
+                        info,
+                        action,
+                        executed,
+                        reward,
+                        terminated or truncated,
+                    )
                     total_reward += reward
                     write(
                         {
@@ -148,6 +158,7 @@ def main():
                             "action": action,
                             "latency_ms": round(latency, 2),
                             "frames_executed": executed,
+                            "transition": transition,
                             "reward": reward,
                             "result": {
                                 "x": int(info["x_pos"]),
@@ -159,17 +170,6 @@ def main():
                             **diagnostics,
                         }
                     )
-                    previous_state = state
-                    history.append(
-                        {
-                            "x": state["mario"]["x"],
-                            "y": state["mario"]["y"],
-                            "action": action,
-                            "next_x": int(info["x_pos"]),
-                            "reward": reward,
-                        }
-                    )
-                    previous = action
                     if decision % 25 == 0:
                         print(
                             f"Episode {episode + 1}, decision {decision}: x={info['x_pos']} action={action} latency={latency:.0f}ms"

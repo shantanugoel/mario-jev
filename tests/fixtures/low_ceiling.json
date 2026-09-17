@@ -1,0 +1,231 @@
+{
+  "mario": {
+    "x": 2704,
+    "y": 176,
+    "grounded": true,
+    "motion_state_raw": 0,
+    "vx_raw": 48,
+    "vy_raw": 0,
+    "status": "small",
+    "body_top_y": 192,
+    "feet_y": 208,
+    "width_px": 16,
+    "vx_px_per_frame": 3.0,
+    "vy_px_per_frame": 0.0,
+    "motion": "grounded"
+  },
+  "terrain": {
+    "legend": "Columns of 13 metatile bytes, rows top-to-bottom at y=32+16*row. 0=empty; nonzero=terrain/object (not all are solid). Typical SMB1: 0x54 ground, 0x10/11 pipe tops, 0x51/52 bricks, 0xc0/c1 question blocks. Unreported columns are unknown.",
+    "columns": [
+      {
+        "dx": -48,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": -32,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": -16,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          81,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 0,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          81,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 16,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          192,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 32,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          81,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 48,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 64,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 80,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      },
+      {
+        "dx": 96,
+        "tiles": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          84,
+          84
+        ]
+      }
+    ]
+  },
+  "nearby_objects": [
+    {
+      "slot": 0,
+      "kind": "goomba",
+      "dx": 79,
+      "dy": 8,
+      "state_raw": 0,
+      "horizontal_gap_px": 63,
+      "vx_px_per_frame": -0.667,
+      "estimated_contact_in_frames": 17.2,
+      "same_height": true,
+      "defeated": false
+    },
+    {
+      "slot": 1,
+      "kind": "goomba",
+      "dx": 102,
+      "dy": 8,
+      "state_raw": 0,
+      "horizontal_gap_px": 86,
+      "vx_px_per_frame": -0.667,
+      "estimated_contact_in_frames": 23.5,
+      "same_height": true,
+      "defeated": false
+    }
+  ],
+  "previous_action": "right_run",
+  "jump_already_held": false,
+  "action_frames": 6
+}

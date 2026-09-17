@@ -225,12 +225,146 @@ def add_context(state, previous=None, elapsed_frames=6, history=()):
     )
     state["recent_decisions"] = list(history)
     state["blocked_forward"] = len(history) >= 3 and all(
-        item["next_x"] - item["x"] < 2 and item["action"].startswith("right")
+        item.get("after", {}).get("x", item.get("next_x", 0))
+        - item.get("before", {}).get("x", item.get("x", 0))
+        < 2
+        and item["action"].startswith("right")
         for item in list(history)[-3:]
     )
     state["physics"] = {
         "motion_estimate_interval_frames": elapsed_frames if previous else None,
         "control": "A starts a jump only when grounded and previously released. Holding A during ascent increases height. Releasing A shortens the jump. B accelerates running; left brakes rightward motion. No new jump can start in midair.",
         "timing": "At running speed Mario moves about 3 pixels/frame. Jump before contact: allow roughly 8-16 frames to gain clearance. A same-height enemy 25 pixels ahead is urgent; 50-70 pixels ahead is a reasonable jump approach. These are approximate guidance, not guaranteed safe trajectories.",
+    }
+    return summarize_landings(summarize_jump_corridor(state))
+
+
+def summarize_jump_corridor(state):
+    """Report ceiling geometry over the approach, without claiming a safe arc.
+
+    Headroom is measured from the CURRENT body top. Contiguous columns with
+    the same ceiling bottom are merged into spans for easier model decisions.
+    """
+    mario = state["mario"]
+    spans = []
+    unknown = []
+    for col in state["terrain"]["columns"]:
+        dx = col["dx"]
+        if dx + 16 <= 0 or dx > 128:
+            continue
+        bottoms = []
+        for row, tile in enumerate(col["tiles"]):
+            bottom = 32 + row * 16 + 16
+            if bottom <= mario["body_top_y"]:
+                if tile in SOLID_TILES:
+                    bottoms.append(bottom)
+                elif tile:
+                    unknown.append({"dx": dx, "bottom_y": bottom, "tile": tile})
+        if not bottoms:
+            continue
+        bottom = max(bottoms)
+        if spans and spans[-1]["end_dx"] == dx and spans[-1]["bottom_y"] == bottom:
+            spans[-1]["end_dx"] = dx + 16
+        else:
+            spans.append(
+                {
+                    "start_dx": dx,
+                    "end_dx": dx + 16,
+                    "bottom_y": bottom,
+                    "headroom_px": mario["body_top_y"] - bottom,
+                }
+            )
+    low = [span for span in spans if span["headroom_px"] < 48]
+    under = [span for span in low if span["start_dx"] < 16 and span["end_dx"] > 0]
+    threat = state.get("nearest_threat")
+    before_threat = [
+        span
+        for span in low
+        if threat and span["start_dx"] <= threat["dx"] + 16 and span["end_dx"] > 0
+    ]
+    history = state.get("recent_decisions", [])
+    previous_top = (
+        history[-1].get("before", history[-1])["y"]
+        + (16 if mario["status"] == "small" else 0)
+        if history
+        else None
+    )
+    possible_bump = bool(
+        len(history) >= 2
+        and mario["motion"] == "falling"
+        and history[-1].get("before", history[-1])["y"]
+        < history[-2].get("before", history[-2])["y"]
+        and mario["y"] >= history[-1].get("before", history[-1])["y"]
+        and any(
+            abs(span["bottom_y"] - previous_top) <= 8
+            for span in spans
+            if span["start_dx"] < 16
+        )
+    )
+    state["jump_corridor"] = {
+        "ceiling_spans": spans,
+        "low_ceiling_now": bool(under),
+        "low_ceiling_before_nearest_threat": bool(before_threat),
+        "minimum_headroom_before_threat_px": min(
+            span["headroom_px"] for span in before_threat
+        )
+        if before_threat
+        else None,
+        "unknown_overhead_tiles": unknown,
+        "possible_recent_head_bump": possible_bump,
+        "visible_ahead_px": max(
+            (col["dx"] + 16 for col in state["terrain"]["columns"]), default=0
+        ),
+        "note": "Spans are relative to Mario; headroom is maximum upward body travel before hitting that ceiling at the current height. A ceiling hit truncates ascent and can make Mario land BEFORE an enemy. This is geometry, not an exact jump simulation. No span outside the visible map means unknown, not clear sky.",
+    }
+    return state
+
+
+def summarize_landings(state):
+    """Merge exposed solid tile tops into candidate landing surfaces."""
+    surfaces = []
+    columns = state["terrain"]["columns"]
+    for row in range(13):
+        for col in columns:
+            tiles = col["tiles"]
+            if tiles[row] not in SOLID_TILES or (
+                row > 0 and tiles[row - 1] in SOLID_TILES
+            ):
+                continue
+            top = 32 + row * 16
+            dx = col["dx"]
+            if (
+                surfaces
+                and surfaces[-1]["top_y"] == top
+                and surfaces[-1]["end_dx"] == dx
+            ):
+                surfaces[-1]["end_dx"] += 16
+            else:
+                surfaces.append(
+                    {
+                        "start_dx": dx,
+                        "end_dx": dx + 16,
+                        "top_y": top,
+                        "height_above_current_feet_px": state["mario"]["feet_y"] - top,
+                    }
+                )
+    gaps = []
+    for col in columns:
+        if all(tile == 0 for tile in col["tiles"][11:]):
+            if gaps and gaps[-1]["end_dx"] == col["dx"]:
+                gaps[-1]["end_dx"] += 16
+            else:
+                gaps.append({"start_dx": col["dx"], "end_dx": col["dx"] + 16})
+    for gap in gaps:
+        gap["observed_width_px"] = gap["end_dx"] - gap["start_dx"]
+        gap["far_edge_visible"] = bool(
+            columns and gap["end_dx"] < columns[-1]["dx"] + 16
+        )
+        far = [surface for surface in surfaces if surface["start_dx"] == gap["end_dx"]]
+        gap["far_bank_top_y"] = max((surface["top_y"] for surface in far), default=None)
+    state["landing_surfaces"] = {
+        "surfaces": surfaces,
+        "floor_gaps": gaps,
+        "note": "Candidate tops only, not reachable/safe landing predictions. Positive height_above_current_feet_px means a raised landing. Floor gaps mean empty bottom two tile rows; platforms may bridge them. Far-bank height is shown only when visible. Land on top of the far bank, not into its side. Unknown tiles/offscreen terrain are not safe support.",
     }
     return state
