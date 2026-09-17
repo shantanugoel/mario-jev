@@ -1,0 +1,24 @@
+[project]
+name = "mario-jev"
+version = "0.1.0"
+description = "Play NES Super Mario Bros. with Jev and structured RAM observations"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gym-super-mario-bros>=9.1.0",
+    "python-dotenv>=1.2.3",
+    "typesafe-sdk>=0.6.0",
+]
+
+[project.scripts]
+mario-jev = "mario_jev:main"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+]
