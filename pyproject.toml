@@ -3,12 +3,17 @@ name = "mario-jev"
 version = "0.1.0"
 description = "Play NES Super Mario Bros. with Jev and structured RAM observations"
 readme = "README.md"
+authors = [{ name = "Shantanu Goel" }]
 requires-python = ">=3.13"
 dependencies = [
     "gym-super-mario-bros>=9.1.0",
     "python-dotenv>=1.2.3",
     "typesafe-sdk>=0.6.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/shantanugoel/mario-jev"
+Author = "https://x.com/shantanugoel"
 
 [project.scripts]
 mario-jev = "mario_jev:main"
