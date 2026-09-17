@@ -25,6 +25,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", choices=["jev", "scripted"], default="jev")
     parser.add_argument("--model", default="jev-latest")
+    parser.add_argument(
+        "--world", type=int, choices=range(1, 9), default=1, help="World (default: 1)"
+    )
+    parser.add_argument(
+        "--stage",
+        type=int,
+        choices=range(1, 5),
+        default=1,
+        help="Stage within the world (default: 1)",
+    )
     parser.add_argument("--frames", type=positive, default=4)
     parser.add_argument(
         "--decisions",
@@ -54,6 +64,7 @@ def main():
         "--speed", type=positive, default=1, help="Replay speed multiplier (default: 1)"
     )
     args = parser.parse_args()
+    env_id = f"SuperMarioBros-{args.world}-{args.stage}-v0"
     if args.replay:
         from .replay import replay
 
@@ -82,7 +93,7 @@ def main():
     try:
         env = JoypadSpace(
             gym_super_mario_bros.make(
-                "SuperMarioBros-1-1-v0",
+                env_id,
                 render_mode="rgb_array" if args.headless else "human",
             ),
             list(ACTIONS.values()),
@@ -121,7 +132,7 @@ def main():
                     "history": args.history,
                     "interrupt_on_landing": True,
                     "seed": args.seed,
-                    "env": "SuperMarioBros-1-1-v0",
+                    "env": env_id,
                 }
             )
             for episode in range(args.episodes):

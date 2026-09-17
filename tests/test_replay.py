@@ -5,10 +5,16 @@ import pytest
 from mario_jev.replay import load_replay
 
 
-def test_replay_preserves_shortened_action_interval(tmp_path):
+@pytest.mark.parametrize("level", ["1-1", "1-2", "8-4"])
+def test_replay_preserves_shortened_action_interval(tmp_path, level):
     path = tmp_path / "run.jsonl"
     records = [
-        {"type": "config", "env": "SuperMarioBros-1-1-v0", "frames": 4, "seed": 123},
+        {
+            "type": "config",
+            "env": f"SuperMarioBros-{level}-v0",
+            "frames": 4,
+            "seed": 123,
+        },
         {"type": "decision", "action": "right", "frames_executed": 1},
     ]
     path.write_text("\n".join(json.dumps(record) for record in records))

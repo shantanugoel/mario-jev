@@ -1,6 +1,6 @@
 # Mario + Jev
 
-A uv-managed Python prototype that plays NES Super Mario Bros. level 1-1.
+A uv-managed Python prototype that plays NES Super Mario Bros. (level 1-1 by default).
 Jev receives structured RAM observations and answers focused questions about movement, starting a jump, and sustaining
 a jump, plus timing hops under low ceilings. Code composes their answers into controller buttons.
 The emulator pauses while Jev responds, then advances up to four game frames by default, stopping early on landing.
@@ -43,6 +43,18 @@ Then run a longer attempt:
 uv run mario-jev --decisions 500
 ```
 
+Choose a world (1–8) and stage (1–4):
+
+```sh
+# Next level: 1-2
+uv run mario-jev --world 1 --stage 2 --decisions 500
+
+# World 2, stage 1
+uv run mario-jev --world 2 --stage 1
+```
+
+Both options default to 1. Replay uses the level saved in the log.
+
 Additional commands:
 
 ```sh
@@ -58,7 +70,7 @@ uv run mario-jev --frames 4 --decisions 200 --model jev-latest
 uv run mario-jev --help
 ```
 
-Each episode resets level 1-1, and ends on death, completion, or the decision
+Each episode resets the selected level, and ends on death, completion, or the decision
 limit. Ctrl-C stops the run. Jev calls use a 15-second HTTP timeout with automatic
 retries disabled; an API error stops gameplay instead of consuming more requests.
 Every Jev decision is a paid API request. `--decisions` limits calls per episode;

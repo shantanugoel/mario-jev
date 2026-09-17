@@ -1,6 +1,7 @@
 """Deterministic playback of recorded controller actions without API calls."""
 
 import json
+import re
 from pathlib import Path
 from time import sleep
 
@@ -16,8 +17,8 @@ def load_replay(path):
             "Replay needs a complete gameplay log beginning with a config record."
         )
     config = records[0]
-    if config.get("env") != "SuperMarioBros-1-1-v0":
-        raise ValueError("Only SMB1 level 1-1 gameplay logs are supported.")
+    if not re.fullmatch(r"SuperMarioBros-[1-8]-[1-4]-v0", str(config.get("env"))):
+        raise ValueError("Replay requires an SMB1 world 1-8, stage 1-4 gameplay log.")
     decisions = [record for record in records if record.get("type") == "decision"]
     if not decisions:
         raise ValueError("No recorded decisions to replay.")
