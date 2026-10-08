@@ -9,9 +9,12 @@ from time import perf_counter
 
 from dotenv import load_dotenv
 
+from .failures import FailureMemory, reviewing_failure
 from .history import ObservationMemory
 from .policy import ACTIONS, JevPolicy, ScriptedPolicy
+from .qlearn import QTable
 from .runner import execute_action
+from .tracker import Tracker, detach_closed_window, end_prompt
 
 
 def positive(value):
@@ -111,10 +114,25 @@ def main():
             return
         policy = JevPolicy(args.model) if args.policy == "jev" else ScriptedPolicy()
         args.log_dir.mkdir(parents=True, exist_ok=True)
+        failures = FailureMemory.load(args.log_dir, env_id)
+        qtable = QTable.load(args.log_dir, env_id)
+        if args.policy == "jev":
+            print(
+                f"Q-learning for {env_id} knows passages through x={qtable.frontier} "
+                f"({len(qtable.values)} states)"
+            )
+        if failures.lessons:
+            print(
+                f"Loaded {len(failures.lessons)} death lessons from {args.log_dir.resolve()}"
+            )
         path = args.log_dir / (
             datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + ".jsonl"
         )
         print(f"Logging to {path.resolve()}")
+        tracker = None
+        if not args.headless:
+            tracker = Tracker(env_id, len(failures.lessons), args.decisions)
+            print("Tracker is on the game window. R retries, Esc closes.")
         with path.open("w") as log:
 
             def write(record):
@@ -133,28 +151,62 @@ def main():
                     "interrupt_on_landing": True,
                     "seed": args.seed,
                     "env": env_id,
+                    "loaded_death_lessons": len(failures.lessons),
+                    "q_frontier": qtable.frontier,
                 }
             )
-            for episode in range(args.episodes):
-                _, info = env.reset(seed=args.seed + episode)
+            attempt = 0
+            scheduled = 0
+            while scheduled < args.episodes:
+                _, info = env.reset(seed=args.seed + scheduled)
                 if not args.headless:
                     env.render()
-                    if episode == 0:
+                    if attempt == 0:
                         # nes-py exposes its pyglet window through the viewer.
                         env.unwrapped.viewer._window.set_size(800, 600)
                         env.render()
                 memory = ObservationMemory(args.history)
                 max_x = int(info["x_pos"])
+                if tracker is not None:
+                    tracker.episode = attempt + 1
+                    tracker.decision = 0
+                    tracker.x = max_x
+                    tracker.y = int(env.unwrapped.ram[0xCE])
+                    tracker.max_x = max(tracker.max_x, max_x)
+                    tracker.reward = 0.0
+                    tracker.action = "wait"
+                    tracker.lesson = None
+                    tracker.correction = None
+                    tracker.source = None
                 total_reward = 0.0
+                qtable.begin_episode()
                 completed = False
                 terminated = truncated = False
                 for decision in range(args.decisions):
-                    state = memory.observe(env.unwrapped.ram, info, args.frames)
+                    state = failures.attach(
+                        memory.observe(env.unwrapped.ram, info, args.frames)
+                    )
                     started = perf_counter()
-                    action, diagnostics = policy.choose(state)
+                    cached = (
+                        None
+                        if args.policy != "jev" or reviewing_failure(state)
+                        else qtable.choose(state)
+                    )
+                    if cached is None:
+                        action, diagnostics = policy.choose(state)
+                    else:
+                        action, diagnostics = cached
                     latency = (perf_counter() - started) * 1000
+                    if tracker is not None:
+                        tracker.preview(action, state, diagnostics)
                     info, reward, terminated, truncated, samples = execute_action(
-                        env, action, args.frames, args.headless
+                        env,
+                        action,
+                        args.frames,
+                        args.headless,
+                        present=None
+                        if tracker is None
+                        else (lambda: tracker.present(env)),
                     )
                     executed = len(samples)
                     max_x = max(max_x, *(sample["x"] for sample in samples))
@@ -170,10 +222,18 @@ def main():
                         samples=samples,
                     )
                     total_reward += reward
+                    qtable.note(
+                        state,
+                        action,
+                        int(info["x_pos"]),
+                        int(env.unwrapped.ram[0xCE]),
+                        int(env.unwrapped.ram[0x1D]) == 0,
+                        "jump" in action,
+                    )
                     write(
                         {
                             "type": "decision",
-                            "episode": episode,
+                            "episode": attempt,
                             "decision": decision,
                             "state": state,
                             "action": action,
@@ -191,29 +251,95 @@ def main():
                             **diagnostics,
                         }
                     )
+                    if tracker is not None:
+                        tracker.update(
+                            episode=attempt + 1,
+                            decision=decision + 1,
+                            x=int(info["x_pos"]),
+                            y=int(env.unwrapped.ram[0xCE]),
+                            reward=total_reward,
+                            action=action,
+                            state=state,
+                            diagnostics=diagnostics,
+                        )
+                        tracker.present(env)
+                    failures.note(
+                        {
+                            "type": "decision",
+                            "action": action,
+                            "state": state,
+                            "result": {
+                                "x": int(info["x_pos"]),
+                                "y": int(env.unwrapped.ram[0xCE]),
+                            },
+                            **diagnostics,
+                        }
+                    )
                     if decision % 25 == 0:
                         print(
-                            f"Episode {episode + 1}, decision {decision}: x={info['x_pos']} action={action} latency={latency:.0f}ms"
+                            f"Episode {attempt + 1}, decision {decision}: x={info['x_pos']} action={action} latency={latency:.0f}ms"
                         )
+                    if tracker is not None and tracker.closed:
+                        break
                     if terminated or truncated:
                         break
-                summary = {
-                    "type": "summary",
-                    "episode": episode,
-                    "decisions": decision + 1,
-                    "max_x": max_x,
-                    "completed": completed,
-                    "reward": total_reward,
-                    "stop_reason": "completed"
+                stop_reason = (
+                    "completed"
                     if completed
                     else "terminated"
                     if terminated
                     else "truncated"
                     if truncated
-                    else "decision_limit",
+                    else "window_closed"
+                    if tracker is not None and tracker.closed
+                    else "decision_limit"
+                )
+                summary = {
+                    "type": "summary",
+                    "episode": attempt,
+                    "decisions": decision + 1,
+                    "max_x": max_x,
+                    "completed": completed,
+                    "reward": total_reward,
+                    "stop_reason": stop_reason,
                 }
                 write(summary)
                 print(json.dumps(summary))
+                qtable.finish_episode(max_x, summary["stop_reason"])
+                if args.policy == "jev":
+                    print(
+                        f"Q-learning answered {qtable.hits} decisions, "
+                        f"Jev answered {qtable.misses}, frontier x={qtable.frontier}"
+                    )
+                learned = failures.finish_episode(summary)
+                if learned:
+                    print(
+                        "Learned death at "
+                        f"x={learned['death_x']} from {learned['fatal_action']} "
+                        f"({learned['hazard']}, seen {learned['times_seen']})"
+                    )
+                    if tracker is not None:
+                        tracker.lessons_loaded = len(failures.lessons)
+                if tracker is not None and tracker.closed:
+                    break
+                if tracker is not None:
+                    stop_label = (
+                        f"Died at x={learned['death_x']}"
+                        if learned
+                        else summary["stop_reason"]
+                    )
+                    choice = tracker.hold(
+                        env,
+                        end_prompt(stop_label, scheduled + 1 < args.episodes),
+                    )
+                    if choice == "retry":
+                        print("Retrying from the start.")
+                        attempt += 1
+                        continue
+                    if choice != "next":
+                        break
+                scheduled += 1
+                attempt += 1
     except KeyboardInterrupt:
         print("Stopped.")
     except Exception as exc:  # noqa: BLE001 -- CLI boundary provides a concise error
@@ -222,4 +348,5 @@ def main():
         if policy is not None:
             policy.close()
         if env is not None:
+            detach_closed_window(env)
             env.close()

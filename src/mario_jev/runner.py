@@ -13,7 +13,7 @@ def frame_position(ram):
     }
 
 
-def execute_action(env, action, frames, headless=True):
+def execute_action(env, action, frames, headless=True, present=None):
     previous = frame_position(env.unwrapped.ram)
     samples = []
     reward = 0.0
@@ -30,7 +30,11 @@ def execute_action(env, action, frames, headless=True):
         }
         samples.append(sample)
         if not headless:
-            env.render()
+            if present is not None:
+                if present() is False:
+                    break
+            else:
+                env.render()
             sleep(1 / 60)
         if terminated or truncated or sample["landed"]:
             break

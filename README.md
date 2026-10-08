@@ -37,6 +37,8 @@ Make a short Jev run first (at most 25 API requests):
 uv run mario-jev --decisions 25
 ```
 
+The game window stays open when the episode ends. A panel under the screen tracks x, the action, and any death lesson in range. Press R to retry that level from the start, including a death just learned. Press Esc to close it, or to start the next episode.
+
 Then run a longer attempt:
 
 ```sh
@@ -122,7 +124,7 @@ action, actual frames held, reward, and possible landing/head-bump/blocking even
 `current_jump` tracks takeoff, elapsed frames, distance and peak height across the
 whole jump, even when takeoff leaves the recent-history window. `last_jump`
 reports the previous completed jump. The last four consecutive frame samples are also included as `recent_frames`.
-Memory resets at each episode. Velocities
+Recent transition memory resets at each episode. Deaths do not: terminated episodes in `runs/` become compact lessons, including the takeoff of a high jump that led to the death. The next attempt receives them as `prior_failures` from 80 pixels before that takeoff, or 192 pixels before the death, whichever is earlier. Across the last five presses of the latest death, Q-learning is skipped and those presses are sent to Jev as `last_failed_steps`, so Jev can see the sequence that died and choose a different action at the matching position. A short jump that died is changed only at that takeoff, so the next try can jump a little later. A repeated fatal button is replaced near the death. If Mario dodged an enemy and then walked back into it, the next attempt repeats the dodge instead of that turnaround. Positions already passed are also stored with tabular Q-learning in `runs/qtable.json`, separately for each level. The next attempt reuses that action and does not call Jev at or before that level's frontier. A finished 1-1 does not count as progress on 1-2. A straight death leaves out the last 128 pixels. A dodge before that death is kept. Once that enemy is passed, a death on the next one is not replayed as progress. A later run that gets farther replaces the actions on the path it took. Velocities
 are interval averages; collision events are estimates, not engine guarantees.
 
 The runner checks RAM after every emulator step. It interrupts frame repetition
@@ -147,7 +149,7 @@ threshold. On an enemy approach under low bricks, without a competing pipe or
 pit, code uses the focused `ceiling_hop` answer instead of the ordinary
 `start_jump` answer.
 Code selects start-jump only when grounded and A previously released, and uses
-sustain-jump while airborne. It adds no scripted hazard override. Separate jump
+sustain-jump while airborne. It adds no general hazard override. When a previous death followed a high jump, that takeoff is remembered: near it a new running jump is released, and A is released once the same jump is 32 pixels above the old takeoff. Within 48 pixels of a death the fatal button is still replaced, unless an enemy is already touching Mario. Separate jump
 buttons allow braking or waiting while jumping. Logs record every model answer
 and the composed action; the reported top-level confidence belongs to movement,
 not to the complete controller action or probability of surviving.
@@ -183,8 +185,11 @@ uv run ruff format --check src tests
 - `src/mario_jev/cli.py`: episode runner and JSONL logging
 - `src/mario_jev/state.py`: SMB1 memory decoding and terrain geometry
 - `src/mario_jev/history.py`: bounded transition history and jump tracking
+- `src/mario_jev/failures.py`: death lessons from earlier runs, attached near the same x
 - `src/mario_jev/runner.py`: per-frame observations and landing interruptions
+- `src/mario_jev/tracker.py`: on-window status panel; the window stays open after the episode
 - `src/mario_jev/policy.py`: Jev choices, button mappings, and scripted baseline
+- `src/mario_jev/qlearn.py`: Q-table for positions already passed, so Jev is not called there
 - `uv.lock`: exact resolved dependency versions
 
 References: [TypeSafe SDK quick start](https://docs.typesafe.ai/introduction/quickstart),

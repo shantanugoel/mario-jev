@@ -39,6 +39,21 @@ def test_termination_stops_frame_repeat():
     assert env.calls == len(samples) == 1
 
 
+def test_present_callback_takes_no_arguments_and_can_stop():
+    env = FakeEnv([(3, 108, False, False), (6, 108, False, False)])
+    calls = []
+
+    def present():
+        calls.append(None)
+        return False
+
+    _, _, _, _, samples = execute_action(
+        env, "right", 4, headless=False, present=present
+    )
+    assert calls == [None]
+    assert len(samples) == 1
+
+
 def test_uninterrupted_action_executes_four_frames():
     env = FakeEnv([(3 * i, 108 + i, False, False) for i in range(1, 5)])
     _, _, _, _, samples = execute_action(env, "right", 4)
